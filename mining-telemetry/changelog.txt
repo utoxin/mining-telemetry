@@ -1,5 +1,5 @@
 ---------------------------------------------------------------------------------------------------
-Version: 0.1.0
+Version: 1.0.0
 Date: 2025-11-09
   Features:
     - Added "Entity counter" signal: Outputs a signal with the mining drill's icon and value of 1, useful for counting miners on a circuit network
