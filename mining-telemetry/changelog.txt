@@ -1,0 +1,13 @@
+---------------------------------------------------------------------------------------------------
+Version: 0.1.0
+Date: 2025-11-09
+  Features:
+    - Added "Entity counter" signal: Outputs a signal with the mining drill's icon and value of 1, useful for counting miners on a circuit network
+    - Added "No resources" signal: Outputs a configurable signal (defaults to "N") when a mining drill has no resources to extract
+    - Per-entity configuration GUI integrated into the mining drill interface
+    - Global mod setting to configure the default "no resources" signal
+    - Per-entity override for the "no resources" signal
+    - Both signals are toggleable and default to off
+    - Automatic wire synchronization when circuit connections are added or removed
+  Info:
+    - Initial release
