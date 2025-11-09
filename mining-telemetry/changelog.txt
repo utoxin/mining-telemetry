@@ -1,4 +1,18 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.1.0
+Date: 2025-11-09
+  Features:
+    - Added "Effective resources" signal: Outputs the total effective resources in the entire patch, accounting for mining productivity bonuses and resource drain modifiers
+    - Added global setting "Disable entity counter when depleted": When enabled, the entity counter signal stops outputting when the miner has no resources, providing an alternative to the "no resources" signal
+  Changes:
+    - Effective resources calculation uses the drill's native resource reading for improved performance
+    - Effective resources signal uses the resource item icon (e.g., iron-ore) as the signal type
+    - Improved "no resources" detection to scan the entire mining area instead of just the current mining target
+  Bugfixes:
+    - Fixed false "no resources" signals being emitted when the drill still has accessible resources
+    - Fixed migration issues when loading saves from older versions
+    - Added safe fallbacks for missing settings when upgrading from older versions
+---------------------------------------------------------------------------------------------------
 Version: 1.0.0
 Date: 2025-11-09
   Features:

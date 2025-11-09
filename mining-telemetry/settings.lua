@@ -8,5 +8,12 @@ data:extend({
         setting_type = "runtime-global",
         default_value = "signal-N",
         order = "a"
+    },
+    {
+        type = "bool-setting",
+        name = "mining-telemetry-disable-entity-counter-when-depleted",
+        setting_type = "runtime-global",
+        default_value = false,
+        order = "b"
     }
 })

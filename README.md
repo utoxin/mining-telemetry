@@ -7,18 +7,29 @@ A Factorio 2.0 mod that adds new circuit network signals to mining drills and re
 ### Entity Counter Signal
 Outputs a signal with the mining drill's icon and a value of 1. This is useful for counting how many miners are connected to a circuit network at a mining outpost.
 
+**Advanced Option**: Enable "Disable entity counter when depleted" in mod settings to automatically stop outputting the entity counter signal when the drill has no resources. This provides a cleaner alternative to using the "no resources" signal.
+
 ### No Resources Signal
 Outputs a configurable signal (defaults to "N") when a mining drill has no resources left to extract. This allows you to:
 - Detect depleted mining patches
 - Trigger automatic miner removal or repositioning
 - Monitor resource depletion across your factory
 
+### Effective Resources Signal
+Outputs the total effective resources available in the entire patch, using the resource item's icon (e.g., iron-ore) as the signal. This calculation accounts for:
+- **Mining productivity bonuses** from research
+- **Resource drain modifiers** (e.g., big mining drills consume fewer resources per output item)
+
+This signal provides accurate resource counts that reflect how many items you'll actually receive from the patch.
+
 ### Configuration Options
 
 - **Per-Entity Settings**: Each mining drill can be configured individually through its GUI
-- **Global Default**: Set a default "no resources" signal in mod settings that applies to all new miners
+- **Global Settings**:
+  - Set a default "no resources" signal that applies to all new miners
+  - Enable automatic disabling of entity counter signals when depleted
 - **Signal Override**: Override the "no resources" signal per-entity for special cases
-- **Toggle Signals**: Both signals can be enabled/disabled independently and default to off
+- **Toggle Signals**: All three signals can be enabled/disabled independently and default to off
 
 ## How to Use
 
@@ -27,7 +38,9 @@ Outputs a configurable signal (defaults to "N") when a mining drill has no resou
 3. In the "Mining Telemetry" panel, check the boxes for the signals you want to enable:
    - **Entity counter**: Always outputs 1 (using the drill's icon as the signal)
    - **No resources signal**: Outputs 1 when the drill has no resources (customizable signal)
+   - **Effective resources**: Outputs the total effective resources in the patch (using the resource icon)
 4. Optionally, click the signal selector to customize which signal is used for "no resources"
+5. Configure global settings in Settings → Mod Settings → Runtime (Global) if desired
 
 ## Technical Details
 

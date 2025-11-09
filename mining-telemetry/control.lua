@@ -7,7 +7,8 @@
 --   combinator = LuaEntity reference (hidden constant combinator),
 --   enable_entity_counter = bool (default: false),
 --   enable_no_resources = bool (default: false),
---   no_resources_signal = SignalID (falls back to global setting)
+--   no_resources_signal = SignalID (falls back to global setting),
+--   enable_effective_resources = bool (default: false)
 -- }
 
 -- Initialize storage data on mod initialization
@@ -20,11 +21,16 @@ end)
 script.on_configuration_changed(function(data)
     storage.entity_config = storage.entity_config or {}
     storage.player_open_entity = storage.player_open_entity or {}
-    -- Clean up invalid entities and their combinators
+    -- Clean up invalid entities and their combinators, and migrate old configs
     for unit_number, config in pairs(storage.entity_config) do
         if not config.entity or not config.entity.valid then
             destroy_combinator(config)
             storage.entity_config[unit_number] = nil
+        else
+            -- Migrate old configs that don't have the new field
+            if config.enable_effective_resources == nil then
+                config.enable_effective_resources = false
+            end
         end
     end
 end)
@@ -47,16 +53,95 @@ local function has_resources(entity)
     -- Check if the entity is a mining drill
     if entity.type ~= "mining-drill" then return false end
 
-    -- Get mining target (the resource entity being mined)
-    local mining_target = entity.mining_target
-    if not mining_target then return false end
+    -- Get or create control behavior
+    local control = entity.get_or_create_control_behavior()
+    if not control then return false end
 
-    -- Check if the mining target has any resources left
-    if mining_target.amount and mining_target.amount > 0 then
-        return true
+    -- Temporarily enable resource reading for just the mining area
+    local original_read_state = control.circuit_read_resources
+    local original_read_mode = control.resource_read_mode
+
+    control.circuit_read_resources = true
+    control.resource_read_mode = defines.control_behavior.mining_drill.resource_read_mode.this_miner
+
+    -- Get the resource targets in the mining area
+    local targets = control.resource_read_targets
+
+    -- Restore original settings
+    control.circuit_read_resources = original_read_state
+    control.resource_read_mode = original_read_mode
+
+    if not targets or #targets == 0 then return false end
+
+    -- Return early as soon as we find any resource with amount > 0
+    for _, resource in pairs(targets) do
+        if resource.valid and resource.amount and resource.amount > 0 then
+            return true
+        end
     end
 
     return false
+end
+
+-- Get total resources in the patch using drill's resource reading
+local function get_patch_resources(entity)
+    if not entity or not entity.valid or entity.type ~= "mining-drill" then return 0 end
+
+    -- Get or create control behavior
+    local control = entity.get_or_create_control_behavior()
+    if not control then return 0 end
+
+    -- Temporarily enable resource reading to get the targets
+    local original_read_state = control.circuit_read_resources
+    local original_read_mode = control.resource_read_mode
+
+    -- Set to read entire field
+    control.circuit_read_resources = true
+    control.resource_read_mode = defines.control_behavior.mining_drill.resource_read_mode.entire_patch
+
+    -- Get the resource targets (all resources in the patch)
+    local targets = control.resource_read_targets
+
+    -- Restore original settings
+    control.circuit_read_resources = original_read_state
+    control.resource_read_mode = original_read_mode
+
+    if not targets or #targets == 0 then return 0 end
+
+    -- Sum up all resources in the patch
+    local total = 0
+    for _, resource in pairs(targets) do
+        if resource.valid and resource.amount then
+            total = total + resource.amount
+        end
+    end
+
+    return total
+end
+
+-- Calculate effective resources accounting for productivity and drain modifiers
+local function calculate_effective_resources(entity)
+    if not entity or not entity.valid or entity.type ~= "mining-drill" then return 0 end
+
+    -- Get the base resource count for the entire patch
+    local base_resources = get_patch_resources(entity)
+    if base_resources == 0 then return 0 end
+
+    -- Apply mining productivity bonus
+    local productivity_bonus = entity.force.mining_drill_productivity_bonus or 0
+    local productivity_multiplier = 1 + productivity_bonus
+
+    -- Apply resource drain modifier (big mining drills have reduced drain)
+    local resource_drain_modifier = 1
+    local prototype = entity.prototype
+    if prototype and prototype.resource_drain_rate_percent then
+        resource_drain_modifier = prototype.resource_drain_rate_percent / 100
+    end
+
+    -- Calculate effective resources
+    local effective_resources = base_resources * productivity_multiplier / resource_drain_modifier
+
+    return math.floor(effective_resources)
 end
 
 -- Create a hidden constant combinator for a mining drill
@@ -148,7 +233,8 @@ local function get_entity_config(entity)
             combinator = nil,  -- Created on demand when signals are enabled
             enable_entity_counter = false,
             enable_no_resources = false,
-            no_resources_signal = nil  -- nil means use global default
+            no_resources_signal = nil,  -- nil means use global default
+            enable_effective_resources = false
         }
     end
 
@@ -163,7 +249,7 @@ local function update_entity_signals(entity)
     if not config then return end
 
     -- Check if any signals are enabled
-    local signals_enabled = config.enable_entity_counter or config.enable_no_resources
+    local signals_enabled = config.enable_entity_counter or config.enable_no_resources or config.enable_effective_resources
 
     -- If no signals enabled, destroy combinator and return
     if not signals_enabled then
@@ -181,20 +267,30 @@ local function update_entity_signals(entity)
     local signals = {}
     local signal_index = 1
 
+    -- Check if entity has resources (used by multiple signals)
+    local entity_has_resources = has_resources(entity)
+    local disable_counter_when_depleted = false
+    local setting = settings.global["mining-telemetry-disable-entity-counter-when-depleted"]
+    if setting then
+        disable_counter_when_depleted = setting.value
+    end
+
     -- Signal #1: Entity counter (outputs entity's own icon with value 1)
     if config.enable_entity_counter then
-        signals[signal_index] = {
-            signal = {type = "item", name = entity.name},
-            count = 1,
-            index = signal_index
-        }
-        signal_index = signal_index + 1
+        -- Only output if resources exist OR the global setting allows it
+        if entity_has_resources or not disable_counter_when_depleted then
+            signals[signal_index] = {
+                signal = {type = "item", name = entity.name},
+                count = 1,
+                index = signal_index
+            }
+            signal_index = signal_index + 1
+        end
     end
 
     -- Signal #2: No resources indicator
     if config.enable_no_resources then
-        local no_resources = not has_resources(entity)
-        if no_resources then
+        if not entity_has_resources then
             local signal = config.no_resources_signal or get_default_no_resources_signal()
             signals[signal_index] = {
                 signal = signal,
@@ -202,6 +298,23 @@ local function update_entity_signals(entity)
                 index = signal_index
             }
             signal_index = signal_index + 1
+        end
+    end
+
+    -- Signal #3: Effective resources (total patch resources with modifiers)
+    if config.enable_effective_resources then
+        local effective_resources = calculate_effective_resources(entity)
+        if effective_resources > 0 then
+            -- Get the resource type from mining target
+            local mining_target = entity.mining_target
+            if mining_target and mining_target.valid then
+                signals[signal_index] = {
+                    signal = {type = "item", name = mining_target.name},
+                    count = effective_resources,
+                    index = signal_index
+                }
+                signal_index = signal_index + 1
+            end
         end
     end
 
@@ -251,8 +364,9 @@ local function on_entity_created(event)
             config.enable_entity_counter = tags.enable_entity_counter or false
             config.enable_no_resources = tags.enable_no_resources or false
             config.no_resources_signal = tags.no_resources_signal
+            config.enable_effective_resources = tags.enable_effective_resources or false
             -- Update signals immediately if any are enabled
-            if config.enable_entity_counter or config.enable_no_resources then
+            if config.enable_entity_counter or config.enable_no_resources or config.enable_effective_resources then
                 update_entity_signals(entity)
             end
         end
@@ -280,7 +394,7 @@ local function on_tick(event)
     for unit_number, config in pairs(storage.entity_config) do
         if config.entity and config.entity.valid then
             -- Only update if at least one signal is enabled
-            if config.enable_entity_counter or config.enable_no_resources then
+            if config.enable_entity_counter or config.enable_no_resources or config.enable_effective_resources then
                 update_entity_signals(config.entity)
 
                 -- Sync wire connections if combinator exists
@@ -312,9 +426,10 @@ local function on_entity_settings_pasted(event)
         dest_config.enable_entity_counter = source_config.enable_entity_counter
         dest_config.enable_no_resources = source_config.enable_no_resources
         dest_config.no_resources_signal = source_config.no_resources_signal
+        dest_config.enable_effective_resources = source_config.enable_effective_resources
 
         -- Update signals immediately if any are enabled
-        if dest_config.enable_entity_counter or dest_config.enable_no_resources then
+        if dest_config.enable_entity_counter or dest_config.enable_no_resources or dest_config.enable_effective_resources then
             update_entity_signals(destination)
         end
     end
@@ -347,11 +462,12 @@ local function on_player_setup_blueprint(event)
             local entity = surface_entities[1]
             local config = storage.entity_config[entity.unit_number]
 
-            if config and (config.enable_entity_counter or config.enable_no_resources) then
+            if config and (config.enable_entity_counter or config.enable_no_resources or config.enable_effective_resources) then
                 blueprint.set_blueprint_entity_tag(i, "mining-telemetry", {
                     enable_entity_counter = config.enable_entity_counter,
                     enable_no_resources = config.enable_no_resources,
-                    no_resources_signal = config.no_resources_signal
+                    no_resources_signal = config.no_resources_signal,
+                    enable_effective_resources = config.enable_effective_resources
                 })
             end
         end
@@ -385,7 +501,8 @@ local GUI_NAMES = {
     main_frame = "mining-telemetry-config-frame",
     entity_counter_checkbox = "mining-telemetry-entity-counter-checkbox",
     no_resources_checkbox = "mining-telemetry-no-resources-checkbox",
-    no_resources_signal_button = "mining-telemetry-no-resources-signal-button"
+    no_resources_signal_button = "mining-telemetry-no-resources-signal-button",
+    effective_resources_checkbox = "mining-telemetry-effective-resources-checkbox"
 }
 
 -- Store which entity each player is currently configuring
@@ -452,6 +569,16 @@ local function create_config_gui(player, entity)
         tooltip = {"mining-telemetry.no-resources-signal-tooltip"},
         enabled = config.enable_no_resources
     }
+
+    -- Effective resources checkbox
+    local effective_resources_flow = frame.add{type = "flow", direction = "horizontal"}
+    effective_resources_flow.add{
+        type = "checkbox",
+        name = GUI_NAMES.effective_resources_checkbox,
+        caption = {"mining-telemetry.effective-resources-label"},
+        state = config.enable_effective_resources or false,
+        tooltip = {"mining-telemetry.effective-resources-tooltip"}
+    }
 end
 
 -- Destroy the configuration GUI for a player
@@ -510,6 +637,9 @@ local function on_gui_checked_state_changed(event)
                 signal_button.enabled = element.state
             end
         end
+    elseif element.name == GUI_NAMES.effective_resources_checkbox then
+        config.enable_effective_resources = element.state
+        update_entity_signals(config.entity)
     end
 end
 
