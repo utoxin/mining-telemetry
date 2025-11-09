@@ -11,7 +11,7 @@ $Root = ($PSScriptRoot -replace '\\','/')
 Set-Location -Path $Root
 
 # Paths (use forward slashes)
-$modRoot = "$Root/concreep-redux"
+$modRoot = "$Root/mining-telemetry"
 $infoPath = "$modRoot/info.json"
 
 if (-not (Test-Path $infoPath)) {
@@ -35,7 +35,7 @@ foreach ($f in $required) {
     if (-not (Test-Path "$modRoot/$f")) { $missing += $f }
 }
 if ($missing.Count -gt 0) {
-    throw "Missing required files in concreep-redux: $($missing -join ', ')"
+    throw "Missing required files in mining-telemetry: $($missing -join ', ')"
 }
 
 # Staging directory to ensure correct top-level folder inside the zip
