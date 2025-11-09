@@ -9,5 +9,9 @@ Date: 2025-11-09
     - Per-entity override for the "no resources" signal
     - Both signals are toggleable and default to off
     - Automatic wire synchronization when circuit connections are added or removed
+    - Blueprint support: Settings are saved in blueprints when creating them
+    - Copy/paste support: Settings can be copied between mining drills using Shift+Right-Click / Shift+Left-Click
+  Known Issues:
+    - Placing a blueprint over existing mining drills does not transfer settings from the blueprint to the existing entities. This is a Factorio API limitation. Use copy/paste or let the blueprint deconstruct and rebuild as workarounds.
   Info:
     - Initial release

@@ -37,6 +37,21 @@ Outputs a configurable signal (defaults to "N") when a mining drill has no resou
 - Zero performance impact when signals are disabled
 - Compatible with all mining drill types
 
+## Known Issues
+
+### Blueprint Placement Over Existing Entities
+When placing a blueprint over existing mining drills, the Mining Telemetry settings are **not transferred** from the blueprint to the existing entities. This is a limitation of Factorio's modding API - there is no event that allows mods to detect and handle blueprint settings when blueprinting over existing entities.
+
+**Workarounds:**
+- **Copy/Paste Tool**: Use Shift+Right-Click to copy a configured drill, then Shift+Left-Click to paste settings onto other drills
+- **Deconstruct and Rebuild**: Let the blueprint deconstruct the old drills and build new ones with the correct settings
+- **Place New**: Place blueprints in empty areas where they create new entities rather than updating existing ones
+
+Settings **do work correctly** when:
+- Using the copy/paste tool (Shift+Right-Click / Shift+Left-Click)
+- Placing blueprints to create new mining drills
+- Robots building from blueprints
+
 ## Requirements
 
 - Factorio 2.0 or higher

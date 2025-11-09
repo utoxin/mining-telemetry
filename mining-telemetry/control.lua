@@ -242,6 +242,21 @@ local function on_entity_created(event)
 
     -- Initialize configuration for this entity
     get_entity_config(entity)
+
+    -- Restore settings from blueprint tags if available
+    if event.tags and event.tags["mining-telemetry"] then
+        local config = get_entity_config(entity)
+        if config then
+            local tags = event.tags["mining-telemetry"]
+            config.enable_entity_counter = tags.enable_entity_counter or false
+            config.enable_no_resources = tags.enable_no_resources or false
+            config.no_resources_signal = tags.no_resources_signal
+            -- Update signals immediately if any are enabled
+            if config.enable_entity_counter or config.enable_no_resources then
+                update_entity_signals(entity)
+            end
+        end
+    end
 end
 
 -- Clean up when entities are removed
@@ -281,6 +296,68 @@ local function on_tick(event)
     end
 end
 
+-- Handle copy/paste of entity settings
+local function on_entity_settings_pasted(event)
+    local source = event.source
+    local destination = event.destination
+
+    if not is_supported_entity(source) or not is_supported_entity(destination) then return end
+
+    local source_config = storage.entity_config[source.unit_number]
+    if not source_config then return end
+
+    -- Copy settings to destination
+    local dest_config = get_entity_config(destination)
+    if dest_config then
+        dest_config.enable_entity_counter = source_config.enable_entity_counter
+        dest_config.enable_no_resources = source_config.enable_no_resources
+        dest_config.no_resources_signal = source_config.no_resources_signal
+
+        -- Update signals immediately if any are enabled
+        if dest_config.enable_entity_counter or dest_config.enable_no_resources then
+            update_entity_signals(destination)
+        end
+    end
+end
+
+-- Handle blueprint creation - store settings as tags
+local function on_player_setup_blueprint(event)
+    local player = game.get_player(event.player_index)
+    if not player then return end
+
+    local blueprint = player.blueprint_to_setup
+    if not blueprint or not blueprint.valid_for_read then
+        blueprint = player.cursor_stack
+    end
+
+    if not blueprint or not blueprint.valid_for_read or not blueprint.is_blueprint then return end
+
+    local entities = blueprint.get_blueprint_entities()
+    if not entities then return end
+
+    -- Store settings for each mining drill in the blueprint
+    for i, bp_entity in pairs(entities) do
+        local surface_entities = player.surface.find_entities_filtered{
+            position = bp_entity.position,
+            type = "mining-drill",
+            limit = 1
+        }
+
+        if surface_entities[1] then
+            local entity = surface_entities[1]
+            local config = storage.entity_config[entity.unit_number]
+
+            if config and (config.enable_entity_counter or config.enable_no_resources) then
+                blueprint.set_blueprint_entity_tag(i, "mining-telemetry", {
+                    enable_entity_counter = config.enable_entity_counter,
+                    enable_no_resources = config.enable_no_resources,
+                    no_resources_signal = config.no_resources_signal
+                })
+            end
+        end
+    end
+end
+
 -- Register event handlers
 script.on_event(defines.events.on_built_entity, on_entity_created)
 script.on_event(defines.events.on_robot_built_entity, on_entity_created)
@@ -291,6 +368,10 @@ script.on_event(defines.events.on_entity_died, on_entity_removed)
 script.on_event(defines.events.on_player_mined_entity, on_entity_removed)
 script.on_event(defines.events.on_robot_mined_entity, on_entity_removed)
 script.on_event(defines.events.script_raised_destroy, on_entity_removed)
+
+-- Handle copy/paste and blueprint operations
+script.on_event(defines.events.on_entity_settings_pasted, on_entity_settings_pasted)
+script.on_event(defines.events.on_player_setup_blueprint, on_player_setup_blueprint)
 
 -- Update signals every 60 ticks (once per second)
 script.on_nth_tick(60, on_tick)
