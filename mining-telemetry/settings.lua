@@ -15,5 +15,12 @@ data:extend({
         setting_type = "runtime-global",
         default_value = false,
         order = "b"
+    },
+    {
+        type = "string-setting",
+        name = "mining-telemetry-rate-indicator-signal",
+        setting_type = "runtime-global",
+        default_value = "signal-R",
+        order = "c"
     }
 })

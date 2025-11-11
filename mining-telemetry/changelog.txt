@@ -1,4 +1,25 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.2.0
+Date: 2025-11-11
+  Features:
+    - Added intelligent handling for infinite resources (like crude oil and modded infinite ores)
+    - Infinite resources now output production rate in items per minute instead of meaningless remaining count
+    - Added "Rate Indicator Signal" global setting (defaults to "R") that outputs when showing production rates
+    - Mixed resource patches (finite + infinite) intelligently prioritize finite counts, then switch to rate when depleted
+    - Multiple resource types in mining area are now properly handled with separate signals for each type
+  Changes:
+    - Infinite resources (like crude oil) never trigger the "no resources" signal
+    - Entity counter always outputs for infinite resources, even with "disable when depleted" setting enabled
+    - Effective resources now scans entire patch for accurate totals
+    - Added circuit signal value clamping to prevent overflow on massive resource patches (max: 2.1 billion)
+  Bugfixes:
+    - Fixed copy/paste not properly removing combinator when pasting settings with all signals disabled
+    - Fixed missing paste sound effect when pasting entity settings
+    - Fixed crash when outputting fluid signals (crude oil, etc.) - now properly detects fluids vs items
+    - Fixed multiple API compatibility issues with Factorio 2.0 (prototypes.fluid, prototypes.entity)
+    - Fixed productivity and resource drain modifier calculations not being applied to effective resources
+    - Fixed circuit signal overflow crash when calculated values exceed 32-bit integer limits
+---------------------------------------------------------------------------------------------------
 Version: 1.1.0
 Date: 2025-11-09
   Features:

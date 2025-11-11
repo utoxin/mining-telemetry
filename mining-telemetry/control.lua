@@ -73,7 +73,17 @@ local function has_resources(entity)
 
     if not targets or #targets == 0 then return false end
 
-    -- Return early as soon as we find any resource with amount > 0
+    -- Check if any resource is infinite (like crude oil) - these never deplete
+    for _, resource in pairs(targets) do
+        if resource.valid then
+            local resource_proto = prototypes.entity[resource.name]
+            if resource_proto and resource_proto.infinite_resource then
+                return true  -- Infinite resources always have resources available
+            end
+        end
+    end
+
+    -- For non-infinite resources, check if any have amount > 0
     for _, resource in pairs(targets) do
         if resource.valid and resource.amount and resource.amount > 0 then
             return true
@@ -120,10 +130,36 @@ local function get_patch_resources(entity)
 end
 
 -- Calculate effective resources accounting for productivity and drain modifiers
+-- For infinite resources (like crude oil), returns production rate per second instead
 local function calculate_effective_resources(entity)
     if not entity or not entity.valid or entity.type ~= "mining-drill" then return 0 end
 
-    -- Get the base resource count for the entire patch
+    -- Check if we're mining an infinite resource
+    local mining_target = entity.mining_target
+    if mining_target and mining_target.valid then
+        local resource_proto = prototypes.entity[mining_target.name]
+        if resource_proto and resource_proto.infinite_resource then
+            -- For infinite resources, calculate production rate per second
+            local mining_speed = entity.prototype.mining_speed or 0
+            local productivity_bonus = entity.force.mining_drill_productivity_bonus or 0
+            local productivity_multiplier = 1 + productivity_bonus
+
+            -- Get the resource's mining time
+            local resource_prototype = mining_target.prototype
+            local mining_time = resource_prototype.mineable_properties.mining_time or 1
+
+            -- For infinite resources, amount represents yield percentage (20-100%)
+            local yield_percent = mining_target.amount / 100
+
+            -- Calculate production rate: (speed / time) * yield * productivity
+            local production_rate = (mining_speed / mining_time) * yield_percent * productivity_multiplier
+
+            -- Return as items per minute for better readability (multiply by 60)
+            return math.floor(production_rate * 60)
+        end
+    end
+
+    -- For finite resources, calculate effective total resources
     local base_resources = get_patch_resources(entity)
     if base_resources == 0 then return 0 end
 
@@ -302,18 +338,140 @@ local function update_entity_signals(entity)
     end
 
     -- Signal #3: Effective resources (total patch resources with modifiers)
+    -- Outputs multiple signals if there are multiple resource types in the mining area
     if config.enable_effective_resources then
-        local effective_resources = calculate_effective_resources(entity)
-        if effective_resources > 0 then
-            -- Get the resource type from mining target
-            local mining_target = entity.mining_target
-            if mining_target and mining_target.valid then
-                signals[signal_index] = {
-                    signal = {type = "item", name = mining_target.name},
-                    count = effective_resources,
-                    index = signal_index
-                }
-                signal_index = signal_index + 1
+        -- Get all resources in the entire patch
+        local control = entity.get_or_create_control_behavior()
+        if control then
+            local original_read_state = control.circuit_read_resources
+            local original_read_mode = control.resource_read_mode
+
+            control.circuit_read_resources = true
+            control.resource_read_mode = defines.control_behavior.mining_drill.resource_read_mode.entire_patch
+
+            local targets = control.resource_read_targets
+
+            control.circuit_read_resources = original_read_state
+            control.resource_read_mode = original_read_mode
+
+            if targets then
+                -- Group resources by type, separating finite and infinite
+                local resource_groups = {}
+                local has_any_finite = false
+                for _, resource in pairs(targets) do
+                    if resource.valid then
+                        local name = resource.name
+                        local resource_proto = prototypes.entity[name]
+                        local is_infinite = resource_proto and resource_proto.infinite_resource or false
+
+                        if not resource_groups[name] then
+                            resource_groups[name] = {
+                                finite_resources = {},
+                                infinite_resources = {}
+                            }
+                        end
+
+                        if is_infinite then
+                            table.insert(resource_groups[name].infinite_resources, resource)
+                        else
+                            table.insert(resource_groups[name].finite_resources, resource)
+                            has_any_finite = true
+                        end
+                    end
+                end
+
+                -- Track if we're outputting any rate signals
+                local outputting_rate_signal = false
+
+                -- Calculate and output signal for each resource type
+                -- IMPORTANT: If there are ANY finite resources anywhere, only output finite counts (no rates)
+                for resource_name, group in pairs(resource_groups) do
+                    local value = 0
+                    local has_finite = #group.finite_resources > 0
+                    local has_infinite = #group.infinite_resources > 0
+                    local is_rate_signal = false
+
+                    if has_finite then
+                        -- Output finite resource count
+                        local total_amount = 0
+                        for _, resource in pairs(group.finite_resources) do
+                            total_amount = total_amount + (resource.amount or 0)
+                        end
+
+                        -- Apply productivity and drain modifiers
+                        local productivity_bonus = entity.force.mining_drill_productivity_bonus or 0
+                        local productivity_multiplier = 1 + productivity_bonus
+
+                        local resource_drain_modifier = 1
+                        local prototype = entity.prototype
+                        if prototype and prototype.resource_drain_rate_percent then
+                            resource_drain_modifier = prototype.resource_drain_rate_percent / 100
+                        end
+
+                        value = math.floor(total_amount * productivity_multiplier / resource_drain_modifier)
+                    elseif has_infinite and not has_any_finite then
+                        -- Only calculate production rate if there are NO finite resources anywhere
+                        local mining_speed = entity.prototype.mining_speed or 0
+                        local productivity_bonus = entity.force.mining_drill_productivity_bonus or 0
+                        local productivity_multiplier = 1 + productivity_bonus
+
+                        -- Use the first resource to get prototype info
+                        local resource_prototype = group.infinite_resources[1].prototype
+                        local mining_time = resource_prototype.mineable_properties.mining_time or 1
+
+                        -- For infinite resources, amount represents yield percentage
+                        -- We'll use the average yield across all infinite resources of this type
+                        local total_yield = 0
+                        for _, resource in pairs(group.infinite_resources) do
+                            total_yield = total_yield + (resource.amount / 100)
+                        end
+                        local avg_yield = total_yield / #group.infinite_resources
+
+                        -- Calculate production rate: (speed / time) * yield * productivity * 60
+                        value = math.floor((mining_speed / mining_time) * avg_yield * productivity_multiplier * 60)
+                        is_rate_signal = true
+                    end
+
+                    if value > 0 then
+                        -- Clamp to circuit network limits (32-bit signed integer)
+                        if value > 2147483647 then
+                            value = 2147483647
+                        end
+
+                        -- Determine signal type (fluid vs item)
+                        local signal_type = "item"
+                        if prototypes.fluid[resource_name] then
+                            signal_type = "fluid"
+                        end
+
+                        signals[signal_index] = {
+                            signal = {type = signal_type, name = resource_name},
+                            count = value,
+                            index = signal_index
+                        }
+                        signal_index = signal_index + 1
+
+                        if is_rate_signal then
+                            outputting_rate_signal = true
+                        end
+                    end
+                end
+
+                -- If we output any rate signals, add the rate indicator signal
+                if outputting_rate_signal then
+                    local rate_indicator_signal_name = "signal-R"
+                    local setting = settings.global["mining-telemetry-rate-indicator-signal"]
+                    if setting and setting.value and setting.value ~= "" then
+                        rate_indicator_signal_name = setting.value
+                    end
+
+                    signals[signal_index] = {
+                        signal = {type = "virtual", name = rate_indicator_signal_name},
+                        count = 1,
+                        index = signal_index
+                    }
+                    signal_index = signal_index + 1
+                end
             end
         end
     end
@@ -428,9 +586,13 @@ local function on_entity_settings_pasted(event)
         dest_config.no_resources_signal = source_config.no_resources_signal
         dest_config.enable_effective_resources = source_config.enable_effective_resources
 
-        -- Update signals immediately if any are enabled
-        if dest_config.enable_entity_counter or dest_config.enable_no_resources or dest_config.enable_effective_resources then
-            update_entity_signals(destination)
+        -- Update signals immediately (this will destroy the combinator if all signals are disabled)
+        update_entity_signals(destination)
+
+        -- Play paste sound
+        local player = game.get_player(event.player_index)
+        if player then
+            player.play_sound{path = "utility/paste_activated"}
         end
     end
 end
